@@ -123,10 +123,52 @@ def build_frame(mode_value, brightness=3, speed=3):
     return data
 
 
+def _set_custom_baudrate(fd, baudrate):
+    """Fija una velocidad no estandar con el ioctl TCSETS2 de Linux."""
+    import array
+    import fcntl
+    import termios
+
+    tcgets2 = getattr(serial.serialposix, "TCGETS2", 0x802C542A)
+    tcsets2 = getattr(serial.serialposix, "TCSETS2", 0x402C542B)
+    bother = getattr(serial.serialposix, "BOTHER", 0o010000)
+
+    buf = array.array("i", [0] * 64)
+    fcntl.ioctl(fd, tcgets2, buf, True)
+    buf[2] &= ~termios.CBAUD
+    buf[2] |= bother
+    buf[9] = baudrate   # c_ispeed
+    buf[10] = baudrate  # c_ospeed
+    fcntl.ioctl(fd, tcsets2, buf)
+
+
+def open_port(port):
+    """Abre el puerto a BAUDRATE.
+
+    10000 baudios no es una velocidad estandar. La ruta que usa pyserial para
+    aplicarla falla con EINVAL en Python 3.12 y anteriores, lo que rompe los
+    ejecutables de PyInstaller compilados con esas versiones. En Linux se abre
+    a una velocidad estandar y se fija la real con TCSETS2, que funciona con
+    cualquier version de Python.
+    """
+    opts = dict(bytesize=serial.EIGHTBITS, parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE, timeout=0.2)
+    if not sys.platform.startswith("linux"):
+        return serial.Serial(port=port, baudrate=BAUDRATE, **opts)
+
+    sp = serial.Serial(port=port, baudrate=9600, **opts)
+    try:
+        _set_custom_baudrate(sp.fileno(), BAUDRATE)
+    except Exception:
+        # Reserva: si el ioctl no funciona (otra arquitectura), que lo intente
+        # pyserial por su cuenta. Si tambien falla, la excepcion sube.
+        sp.close()
+        return serial.Serial(port=port, baudrate=BAUDRATE, **opts)
+    return sp
+
+
 def send_frame(port, frame):
-    sp = serial.Serial(port=port, baudrate=BAUDRATE,
-                       bytesize=serial.EIGHTBITS, parity=serial.PARITY_NONE,
-                       stopbits=serial.STOPBITS_ONE, timeout=0.2)
+    sp = open_port(port)
     try:
         for b in frame:
             time.sleep(0.005)

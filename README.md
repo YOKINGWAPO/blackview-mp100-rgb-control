@@ -30,10 +30,18 @@ y dejarlo configurado para que se aplique **automáticamente al iniciar el equip
 
 ### Linux
 ```bash
-chmod +x RGBLedControl-linux
-sudo usermod -aG dialout $USER   # permiso al puerto serie (una vez; reinicia sesión)
-./RGBLedControl-linux
+sudo ./setup-linux.sh        # una sola vez por equipo
+./bin/RGBLedControl-linux
 ```
+
+`setup-linux.sh` instala una regla udev para el chip CH340, añade tu usuario al
+grupo del puerto serie (`dialout` o `uucp`, según la distribución) y da permiso
+de ejecución al binario. **Sin ejecutarlo obtendrás `Permission denied`** al
+aplicar cualquier modo, porque `/dev/ttyUSB*` no es accesible por defecto.
+
+> Requiere **Ubuntu 22.04 / Debian 12 o posterior** (glibc 2.35+).
+> En sistemas más antiguos, ejecuta la app desde el código fuente.
+
 La casilla **"Aplicar automáticamente"** crea el autoarranque en `~/.config/autostart/`.
 
 ---
@@ -90,6 +98,12 @@ Los bytes se envían **uno a uno** con ~5 ms de separación.
 
 Ejemplo (apagar, brillo 3, velocidad 3): `250, 4, 3, 3, 4`.
 
+> **Nota sobre los 10000 baudios.** No es una velocidad estándar de Linux, y la
+> vía que usa `pyserial` para aplicarla falla con `EINVAL` (error 22) en Python
+> 3.12 y anteriores — lo que rompía los ejecutables de PyInstaller. Por eso el
+> código abre el puerto a una velocidad estándar y fija la real con el `ioctl`
+> `TCSETS2`, que funciona con cualquier versión de Python.
+
 ---
 
 ## Compilar desde el código
@@ -109,12 +123,26 @@ pip install pyinstaller
 # Windows
 pyinstaller --onefile --noconsole --name RGBLedControl rgb_gui.py
 
-# Linux (preferiblemente dentro de Linux/contenedor; instala python3-tk)
+# Linux (instala python3-tk)
 pyinstaller --onefile --name RGBLedControl-linux rgb_gui.py
 ```
 
 > El binario de Linux es para **x64 (glibc)**. Para Raspberry Pi (ARM) hay que
 > recompilarlo en un equipo ARM.
+
+**Compila en la distribución más antigua que quieras soportar.** PyInstaller
+enlaza con la glibc del sistema donde compilas y el resultado solo es compatible
+hacia arriba: un binario hecho en Ubuntu 26.04 falla en 22.04 con
+`version GLIBC_2.38 not found`. El binario que se distribuye aquí se compila en
+un contenedor de Ubuntu 22.04:
+
+```bash
+docker run --rm -v "$PWD":/src:ro -v "$PWD/bin":/out ubuntu:22.04 bash -c '
+  apt-get update -qq && apt-get install -y -qq python3-pip python3-tk binutils
+  pip3 install -q pyinstaller pyserial
+  cd /tmp && pyinstaller --onefile --name RGBLedControl-linux \
+      --distpath /out --workpath /tmp/w --specpath /tmp /src/rgb_gui.py'
+```
 
 ---
 
